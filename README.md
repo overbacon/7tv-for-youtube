@@ -1,11 +1,11 @@
 # 7tv-for-youtube
-# 7TV for YouTube (Unofficial)
+# 7TV for YouTube (Unofficial) 7TV для YouTube (Неофициально)
 
-# DOWNLOAD CLICK ON [RELEASES](https://github.com/syocless/7tv-for-youtube/releases) 
 # КАЧАТЬ ЧЕРЕЗ [РЕЛИЗЫ](https://github.com/syocless/7tv-for-youtube/releases)
+# DOWNLOAD CLICK ON [RELEASES](https://github.com/syocless/7tv-for-youtube/releases) 
 # НАБОР СМАЙЛИКОВ Olesha Ent. https://7tv.app/emote-sets/01FEGJ99QR000AENY3GSAKBAHP
 
-7TV for YouTube (Unofficial)
+7TV для YouTube (Неофициально)
 Расширение для браузера, которое добавляет 7TV-смайлики в YouTube Live Chat.
 Расширение автоматически загружает глобальные смайлики 7TV и позволяет добавлять дополнительные наборы смайликов — например, набор конкретного стримера или личный набор
 Проект не связан официально с 7TV, Twitch или YouTube.

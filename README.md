@@ -3,6 +3,7 @@
 
 # DOWNLOAD CLICK ON RELEASES 
 # КАЧАТЬ ЧЕРЕЗ РЕЛИЗЫ
+# НАБОР СМАЙЛИКОВ Olesha Ent. https://7tv.app/emote-sets/01FEGJ99QR000AENY3GSAKBAHP
 
 7TV for YouTube (Unofficial)
 Расширение для браузера, которое добавляет 7TV-смайлики в YouTube Live Chat.

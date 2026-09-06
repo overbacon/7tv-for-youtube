@@ -1,6 +1,8 @@
 # 7tv-for-youtube
 # 7TV for YouTube (Unofficial)
 
+# DOWNLOAD CLICK ON RELEASES 
+
 Renders 7TV emotes inside YouTube Live Chat. Unofficial and not affiliated
 with 7TV, Twitch, or YouTube — built because 7TV doesn't support YouTube yet.
 

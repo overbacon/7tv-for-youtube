@@ -1,8 +1,8 @@
 # 7tv-for-youtube
 # 7TV for YouTube (Unofficial)
 
-# DOWNLOAD CLICK ON RELEASES 
-# КАЧАТЬ ЧЕРЕЗ РЕЛИЗЫ
+# DOWNLOAD CLICK ON [RELEASES](https://github.com/syocless/7tv-for-youtube/releases) 
+# КАЧАТЬ ЧЕРЕЗ [РЕЛИЗЫ](https://github.com/syocless/7tv-for-youtube/releases)
 # НАБОР СМАЙЛИКОВ Olesha Ent. https://7tv.app/emote-sets/01FEGJ99QR000AENY3GSAKBAHP
 
 7TV for YouTube (Unofficial)

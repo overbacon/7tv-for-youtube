@@ -16,7 +16,7 @@
 - Автоматически заменяет названия 7TV-смайликов в YouTube Live Chat на изображения.
 - Смайлики появляются непосредственно во время общения в чате.
 
-Установка Chrome / Edge / Brave
+# Установка Chrome / Edge / Brave
 1. Скачайте и распакуйте "7tv-for-youtube-chrome.zip".
 2. Откройте в браузере страницу:   
    "chrome://extensions"
@@ -25,13 +25,14 @@
 5. Выберите папку с распакованным расширением.
 6. После установки откройте YouTube и перейдите на любую трансляцию с Live Chat.
 
-Установка Firefox
+# Установка Firefox
 1. Скачайте и распакуйте "7tv-for-youtube-firefox.zip".
 2. Откройте:
    "about:debugging#/runtime/this-firefox"
-3. Нажмите Load Temporary Add-on.
-4. Выберите файл "manifest.json" внутри распакованной папки.
-5. Обратите внимание: временное расширение удаляется после перезапуска Firefox.
+4. Откройте "Этот Firefox"
+4. Нажмите Load Temporary Add-on/Загрузить временное дополнение
+5. Выберите файл "manifest.json" внутри распакованной папки.
+6. Обратите внимание: временное расширение удаляется после перезапуска Firefox.
 
 Как добавить дополнительные смайлики
 Чтобы добавить смайлики конкретного канала или свой набор:
@@ -102,6 +103,18 @@ with 7TV, Twitch, or YouTube — built because 7TV doesn't support YouTube yet.
 Open the extension popup and paste a 7tv.app emote set link (the URL
 must contain /emote-sets/, not /users/) — a channel page, comma-separate
 multiple. Put your own personal set last so its names win on conflicts.
+# Adding emote sets
+- Open the browser's Extensions menu.
+- Find 7TV for YouTube.
+- Open the extension Popup.
+- Paste your 7TV emote-set link into the field.
+- Add/save the set.
+The URL must contain:
+/emote-sets/
+Do not use /users/.
+Multiple emote-set links can be added, separated by commas.
+Important
+Only users who have the extension installed will see the 7TV emotes. The extension is unofficial and is not affiliated with 7TV, Twitch, or YouTube.
 
 ## License
 

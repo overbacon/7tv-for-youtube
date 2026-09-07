@@ -5,6 +5,7 @@ const SEVEN_TV_API = "https://7tv.io/v3";
 
 let emoteMap = null;   // name -> image url
 let emoteRegex = null; // compiled once the map is ready
+const emoteSets = [];  // { name, emotes } per loaded set, for the picker
 
 function buildEmoteUrl(host, files) {
   // Prefer a small static webp/png for inline chat rendering.
@@ -27,9 +28,12 @@ async function loadEmoteSet(emoteSetId) {
     const host = emote.data?.host;
     if (!host) continue;
     const url = buildEmoteUrl(host, host.files || []);
-    if (url) map.set(emote.name, url);
+    // Bit 0 of the set entry's flags marks a zero-width (overlay) emote: it
+    // renders on top of the emote before it instead of beside it. A set owner
+    // can set that per set, so this flag wins over the emote's own.
+    if (url) map.set(emote.name, { url, zeroWidth: (emote.flags & 1) !== 0 });
   }
-  return map;
+  return { name: data.name || "Emotes", emotes: map };
 }
 
 function compileRegex(map) {
@@ -44,6 +48,15 @@ function compileRegex(map) {
     `(?<![\\p{L}\\p{N}_])(${escaped.join("|")})(?![\\p{L}\\p{N}_])`,
     "gu"
   );
+}
+
+function makeEmoteImg(name, info, overlay) {
+  const img = document.createElement("img");
+  img.src = info.url;
+  img.alt = name;
+  img.title = name;
+  img.className = overlay ? "seventv-emote seventv-zero-width" : "seventv-emote";
+  return img;
 }
 
 function replaceInMessageNode(node) {
@@ -62,14 +75,24 @@ function replaceInMessageNode(node) {
     const frag = document.createDocumentFragment();
     let lastIndex = 0;
     let match;
+    let stack = null; // span holding the emote a zero-width one stacks onto
+
     while ((match = emoteRegex.exec(text))) {
-      frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      const img = document.createElement("img");
-      img.src = emoteMap.get(match[1]);
-      img.alt = match[1];
-      img.title = match[1];
-      img.className = "seventv-emote";
-      frag.appendChild(img);
+      const between = text.slice(lastIndex, match.index);
+      const info = emoteMap.get(match[1]);
+
+      // A zero-width emote renders on top of the emote before it, and the
+      // space between them is swallowed — but only if one actually precedes
+      // it. On its own it falls back to rendering like any other emote.
+      if (info.zeroWidth && stack && /^\s*$/.test(between)) {
+        stack.appendChild(makeEmoteImg(match[1], info, true));
+      } else {
+        if (between) frag.appendChild(document.createTextNode(between));
+        stack = document.createElement("span");
+        stack.className = "seventv-emote-stack";
+        stack.appendChild(makeEmoteImg(match[1], info, false));
+        frag.appendChild(stack);
+      }
       lastIndex = match.index + match[1].length;
     }
     frag.appendChild(document.createTextNode(text.slice(lastIndex)));
@@ -120,27 +143,16 @@ function observeChat() {
   observer.observe(target, { childList: true, subtree: true, characterData: true });
 }
 
-function showBadge(text, isError) {
-  let badge = document.getElementById("seventv-debug-badge");
-  if (!badge) {
-    badge = document.createElement("div");
-    badge.id = "seventv-debug-badge";
-    badge.style.cssText =
-      "position:fixed;bottom:4px;right:4px;z-index:99999;" +
-      "background:rgba(0,0,0,0.75);color:#fff;font:11px sans-serif;" +
-      "padding:3px 6px;border-radius:4px;pointer-events:none;";
-    document.body.appendChild(badge);
-  }
-  badge.textContent = "7TV: " + text;
-  badge.style.color = isError ? "#ff8080" : "#a0ffa0";
-}
-
-function updateIconBadge(count, isError) {
+// Status goes to the extension's toolbar icon instead of an overlay on the
+// page: an on-page badge sits on top of the chat, and this one is visible
+// even when the chat is scrolled or the menu is open.
+function showBadge(text, isError, count) {
+  console.log("[7TV for YouTube]", text);
   try {
     chrome.runtime.sendMessage({ type: "seventv-status", count, error: isError });
   } catch (err) {
-    // Messaging can fail if the background worker hasn't started yet;
-    // the on-page badge above still shows the same status either way.
+    // The background worker may still be asleep; the console line above
+    // records the same status either way.
     console.warn("[7TV for YouTube] icon badge update failed", err);
   }
 }
@@ -159,29 +171,27 @@ async function init() {
 
   const merged = new Map();
 
-  // Global set loads by default so the standard 7TV picks render.
-  try {
-    const globalMap = await loadEmoteSet(GLOBAL_EMOTE_SET_ID);
-    for (const [name, url] of globalMap) merged.set(name, url);
-  } catch (err) {
-    console.warn("[7TV for YouTube] failed to load global set", err);
-    showBadge("global set failed: " + err.message, true);
-  }
+  // Global set first so the standard 7TV picks render, then the extra sets in
+  // the order given — a set added later (e.g. your own personal one) can
+  // override a name from an earlier one. Promise.all keeps that order while
+  // fetching them all at once instead of one round trip after another.
+  const loaded = await Promise.all(
+    [GLOBAL_EMOTE_SET_ID, ...extraIds].map(id =>
+      loadEmoteSet(id).catch(err => {
+        console.warn(`[7TV for YouTube] failed to load set ${id}`, err);
+        return null;
+      })
+    )
+  );
 
-  // Extra sets load in the order given, so a set added later (e.g. your
-  // own personal one) can override a name from an earlier one.
-  for (const id of extraIds) {
-    try {
-      const map = await loadEmoteSet(id);
-      for (const [name, url] of map) merged.set(name, url);
-    } catch (err) {
-      console.warn(`[7TV for YouTube] failed to load set ${id}`, err);
-    }
+  for (const set of loaded) {
+    if (!set) continue;
+    emoteSets.push(set);
+    for (const [name, url] of set.emotes) merged.set(name, url);
   }
 
   if (merged.size === 0) {
     showBadge("0 emotes loaded (see console)", true);
-    updateIconBadge(0, true);
     return;
   }
 
@@ -191,11 +201,9 @@ async function init() {
   scanExistingMessages();
   observeChat();
   startSafetyNet();
-  showBadge(`${merged.size} emotes ready`);
-  updateIconBadge(merged.size, false);
-
-  createPickerUI();
-  initAutocomplete();
+  await loadRecent();
+  mountPickerWhenReady();
+  showBadge(merged.size + " emotes ready", false, merged.size);
 }
 
 init();
@@ -205,326 +213,516 @@ chrome.storage.onChanged.addListener(changes => {
   if (changes.emoteSetIds) location.reload();
 });
 
-// ################ ПАНЕЛЬ ВЫБОРА ЭМОДЗИ С ПОИСКОМ
+// --- Recently used ----------------------------------------------------------
 
-function createPickerUI() {
-  const inputContainer = document.querySelector(
-    'yt-live-chat-message-input-renderer #input-container'
+const RECENT_LIMIT = 36;
+let recentNames = [];
+
+async function loadRecent() {
+  try {
+    const { recentEmotes } = await chrome.storage.local.get("recentEmotes");
+    recentNames = Array.isArray(recentEmotes) ? recentEmotes : [];
+  } catch (err) {
+    console.warn("[7TV for YouTube] could not read recent emotes", err);
+  }
+}
+
+function rememberEmote(name) {
+  recentNames = [name, ...recentNames.filter(n => n !== name)].slice(0, RECENT_LIMIT);
+  try {
+    chrome.storage.local.set({ recentEmotes: recentNames });
+  } catch (err) {
+    console.warn("[7TV for YouTube] could not save recent emotes", err);
+  }
+}
+
+// --- Shared lookup and ranking ----------------------------------------------
+
+function chatInput() {
+  return (
+    document.querySelector("yt-live-chat-text-input-field-renderer #input") ||
+    document.querySelector("#input[contenteditable]")
   );
+}
 
-  if (!inputContainer || document.getElementById('seventv-picker-btn')) return;
+function insertEmote(name) {
+  const input = chatInput();
+  if (!input) return;
 
-  inputContainer.style.position = 'relative';
+  input.focus();
+  // execCommand fires the beforeinput/input events YouTube's own component
+  // listens for, so the send button enables. Setting textContent doesn't.
+  const pad = input.textContent && !/\s$/.test(input.textContent) ? " " : "";
+  document.execCommand("insertText", false, pad + name + " ");
+  rememberEmote(name);
+}
 
-  // Кнопка открытия панели
-  const toggleBtn = document.createElement('button');
-  toggleBtn.id = 'seventv-picker-btn';
-  toggleBtn.textContent = '7TV';
-  toggleBtn.title = 'Открыть панель 7TV';
+// Prefix matches first, then the shortest name. A plain includes() filter put
+// the obvious answer anywhere among hundreds of hits.
+function rankedMatches(query, limit) {
+  const q = query.trim().toLowerCase();
+  if (!q || !emoteMap) return [];
 
-  // Общий popup-контейнер
-  const pickerContainer = document.createElement('div');
-  pickerContainer.id = 'seventv-picker-container';
+  const hits = [];
+  for (const [name, info] of emoteMap) {
+    const at = name.toLowerCase().indexOf(q);
+    if (at === -1) continue;
+    hits.push({ name, info, prefix: at === 0 ? 0 : 1 });
+  }
+  hits.sort(
+    (a, b) =>
+      a.prefix - b.prefix ||
+      a.name.length - b.name.length ||
+      a.name.localeCompare(b.name)
+  );
+  return limit ? hits.slice(0, limit) : hits;
+}
 
-  // Поле поиска
-  const searchInput = document.createElement('input');
-  searchInput.type = 'text';
-  searchInput.placeholder = 'Поиск эмодзи...';
+function el(tag, className, parent) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (parent) parent.appendChild(node);
+  return node;
+}
 
-  // Grid
-  const pickerGrid = document.createElement('div');
-  pickerGrid.id = 'seventv-picker-grid';
+// --- Emote picker -----------------------------------------------------------
+// Layout and class names mirror 7TV's own emote menu: a provider row and
+// search box in the header, sticky per-set headers that collapse, and a
+// sidebar rail of set icons on the right.
 
-  // Поиск
-  searchInput.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase();
+// A dropped or failed request retries just that one tile. Tiles that already
+// arrived keep their image and are never refetched.
+function loadTile(img, attempt) {
+  img.onerror = () => {
+    // Drop the failed src so the tile goes blank rather than showing a broken
+    // image icon, and so re-setting it below counts as a real change.
+    img.removeAttribute("src");
+    if (attempt >= 3) return;
+    // Back off, and stagger by a random slice: a batch of tiles that failed
+    // together must not retry in lockstep and rebuild the pile-up that caused
+    // the failures in the first place.
+    setTimeout(() => loadTile(img, attempt + 1), 400 * 2 ** attempt + Math.random() * 400);
+  };
+  img.src = img.dataset.src;
+}
 
-    const items = pickerGrid.querySelectorAll('.seventv-picker-item');
+function buildTile(name, info, ctx) {
+  const cell = el("div", "seventv-emote-container");
+  cell.dataset.name = name.toLowerCase();
+  cell.dataset.emote = name;
+  if (info.zeroWidth) cell.setAttribute("zero-width", "true");
 
-    items.forEach(img => {
-      img.style.display =
-        img.alt.toLowerCase().includes(query)
-          ? 'block'
-          : 'none';
-    });
+  const img = el("img", null, cell);
+  img.dataset.src = info.url;
+  img.alt = name;
+  ctx.watcher.observe(img);
+
+  cell.addEventListener("click", () => insertEmote(name));
+  cell.addEventListener("mouseenter", () => ctx.preview(name, info));
+  return cell;
+}
+
+function buildSetSection(set, scroller, rail, ctx) {
+  const container = el("div", "seventv-emote-set-container", scroller);
+  // 7TV uses the set owner's avatar here; the first emote is a good enough
+  // stand-in and never needs another API call.
+  const cover = set.emotes.values().next().value;
+
+  const header = el("div", "seventv-set-header", container);
+  if (cover) el("img", "seventv-set-header-icon", header).src = cover.url;
+  else el("div", "seventv-set-header-icon", header);
+  el("span", "seventv-set-name", header).textContent = set.name;
+  el("div", "seventv-set-chevron", header).textContent = "▾";
+
+  const grid = el("div", "seventv-emote-set", container);
+  for (const [name, info] of set.emotes) grid.appendChild(buildTile(name, info, ctx));
+
+  header.addEventListener("click", () => {
+    container.setAttribute("collapsed", container.getAttribute("collapsed") !== "true");
   });
 
-  // Переключение popup
-  toggleBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    pickerContainer.classList.toggle('seventv-active');
+  const tab = el("div", "seventv-emote-menu-set-sidebar-icon-container", rail);
+  const tabIcon = el("img", "seventv-emote-menu-set-sidebar-icon", tab);
+  if (cover) tabIcon.src = cover.url;
+  tabIcon.title = set.name;
+  tab.addEventListener("click", () => {
+    container.setAttribute("collapsed", "false");
+    container.scrollIntoView({ block: "start" });
   });
 
-  // Закрытие при клике вне панели
-  document.addEventListener('click', (e) => {
-    if (
-      !pickerContainer.contains(e.target) &&
-      e.target !== toggleBtn
-    ) {
-      pickerContainer.classList.remove('seventv-active');
+  ctx.railFor.set(header, tab);
+  ctx.spy.observe(header);
+  return container;
+}
+
+function buildPicker() {
+  const menu = el("div", "seventv-emote-menu");
+  menu.id = "seventv-picker";
+  menu.hidden = true;
+
+  const header = el("div", "seventv-emote-menu-header", menu);
+  const providers = el("div", "seventv-emote-menu-providers", header);
+
+  const search = el("div", "seventv-emote-menu-search", header);
+  el("div", "search-icon", search).textContent = "⌕";
+  const input = el("input", "seventv-emote-menu-search-input", search);
+  input.type = "text";
+  input.placeholder = "Search for emotes";
+
+  const body = el("div", "seventv-emote-menu-body", menu);
+  const tabs = el("div", "seventv-emote-menu-tab-container", body);
+  const scroller = el("div", "seventv-emote-menu-scroll", tabs);
+  const rail = el("div", "seventv-emote-menu-tab-sidebar", tabs);
+  const icons = el("div", "seventv-emote-menu-sidebar-icons", rail);
+
+  const footer = el("div", "seventv-emote-menu-footer", menu);
+  const previewImg = el("img", "seventv-preview-img", footer);
+  const previewName = el("span", "seventv-preview-name", footer);
+
+  function clearPreview() {
+    previewImg.hidden = true;
+    previewName.textContent = emoteMap.size + " emotes";
+  }
+  function showPreview(name, info) {
+    previewImg.src = info.url;
+    previewImg.hidden = false;
+    previewName.textContent = info.zeroWidth ? name + " · overlay" : name;
+  }
+
+  // Native loading="lazy" doesn't hold these back: with ~900 emotes it still
+  // puts every request in flight at once, so images crawl in or fail outright.
+  // Fetch a tile only once it has actually scrolled into the menu.
+  const watcher = new IntersectionObserver((entries, obs) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      loadTile(entry.target, 0);
+      obs.unobserve(entry.target);
     }
-  });
+  }, { root: scroller, rootMargin: "200px" });
 
-  const titleThing = document.createElement('h1');
-  titleThing.textContent = '7TV for YT (Unofficial)';
-  titleThing.style.textAlign = 'center';
-  titleThing.style.fontSize = '14px';
-  titleThing.style.marginTop = '12px';
-  titleThing.style.fontWeight = '400';
+  // Highlight the rail icon of whichever set header sits at the top of the
+  // scroll area, so the rail tracks scrolling and not just clicks.
+  const railFor = new Map();
+  const spy = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const tab = railFor.get(entry.target);
+      if (!tab) continue;
+      for (const other of icons.children) other.removeAttribute("selected");
+      tab.setAttribute("selected", "true");
+    }
+  }, { root: scroller, rootMargin: "0px 0px -85% 0px" });
 
-  pickerContainer.appendChild(titleThing);
-  pickerContainer.appendChild(searchInput);
-  pickerContainer.appendChild(pickerGrid);
+  const ctx = { watcher, spy, railFor, preview: showPreview };
 
-  inputContainer.appendChild(toggleBtn);
-  inputContainer.appendChild(pickerContainer);
+  // Search results replace the set list rather than filtering it in place:
+  // ranking only means something once the results are one flat list.
+  const resultsContainer = el("div", "seventv-emote-set-container", scroller);
+  resultsContainer.hidden = true;
+  const resultsHeader = el("div", "seventv-set-header", resultsContainer);
+  el("div", "seventv-set-header-icon", resultsHeader);
+  const resultsName = el("span", "seventv-set-name", resultsHeader);
+  const resultsGrid = el("div", "seventv-emote-set", resultsContainer);
 
-  // Заполняем grid
-  populatePickerGrid(pickerGrid);
-}
+  const recentContainer = el("div", "seventv-emote-set-container", scroller);
+  const recentHeader = el("div", "seventv-set-header", recentContainer);
+  el("div", "seventv-set-header-icon", recentHeader);
+  el("span", "seventv-set-name", recentHeader).textContent = "Recently used";
+  const recentGrid = el("div", "seventv-emote-set", recentContainer);
 
-function populatePickerGrid(gridContainer) {
-  if (!emoteMap || emoteMap.size === 0) return;
+  const setContainers = emoteSets.map(set => buildSetSection(set, scroller, icons, ctx));
+  icons.firstElementChild?.setAttribute("selected", "true");
 
-  gridContainer.innerHTML = '';
-
-  for (const [name, url] of emoteMap) {
-    const img = document.createElement('img');
-
-    img.src = url;
-    img.alt = name;
-    img.title = name;
-    img.className = 'seventv-picker-item';
-
-    img.addEventListener('click', () => {
-      insertEmoteToInput(name);
-    });
-
-    gridContainer.appendChild(img);
-  }
-}
-
-// YouTube использует реактивные фреймворки (Polymer/Lit), которые
-// отслеживают события, а не просто читают DOM напрямую. Поэтому после
-// любой ручной вставки текста нужно синхронизировать несколько
-// элементов интерфейса, иначе кнопка отправки останется неактивной.
-function syncChatInputState(editableInput) {
-  const inputRenderer = document.querySelector('yt-live-chat-message-input-renderer');
-  if (inputRenderer) {
-    inputRenderer.setAttribute('input-expanded', '');
+  function refreshRecent() {
+    recentGrid.textContent = "";
+    const live = recentNames.filter(n => emoteMap.has(n));
+    for (const name of live) {
+      recentGrid.appendChild(buildTile(name, emoteMap.get(name), ctx));
+    }
+    recentContainer.hidden = live.length === 0;
   }
 
-  if (editableInput) {
-    const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-    editableInput.dispatchEvent(inputEvent);
+  let activeIndex = -1;
 
-    const keyupEvent = new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter' });
-    editableInput.dispatchEvent(keyupEvent);
+  function visibleTiles() {
+    return [...scroller.querySelectorAll(".seventv-emote-container")]
+      .filter(tile => tile.offsetParent !== null);
   }
 
-  const textInputRenderer = document.querySelector('yt-live-chat-text-input-field-renderer#input');
-  if (textInputRenderer) {
-    textInputRenderer.setAttribute('has-text', '');
-    textInputRenderer.setAttribute('input-expanded', '');
-  }
-
-  const charCount = document.querySelector('div#count.style-scope.yt-live-chat-message-input-renderer');
-  if (charCount && editableInput) {
-    const remaining = 200 - editableInput.textContent.length;
-    charCount.textContent = Math.max(0, remaining).toString();
-  }
-
-  const sendButtonContainer = document.querySelector('div#send-button.style-scope.yt-live-chat-message-input-renderer');
-  if (sendButtonContainer) {
-    sendButtonContainer.removeAttribute('hidden');
-  }
-
-  const sendButton = sendButtonContainer
-    ? sendButtonContainer.querySelector('button')
-    : document.querySelector('button[aria-label="Send"]');
-  if (sendButton) {
-    sendButton.removeAttribute('disabled');
-    sendButton.setAttribute('aria-disabled', 'false');
-  }
-}
-
-function getEditableChatInput() {
-  return document.querySelector(
-    'yt-live-chat-text-input-field-renderer#input div#input[contenteditable]'
-  );
-}
-
-function insertEmoteToInput(emoteName) {
-  const editableInput = getEditableChatInput();
-  if (editableInput) {
-    editableInput.focus();
-    const currentText = editableInput.textContent.trim();
-    editableInput.textContent = currentText ? currentText + ' ' + emoteName : emoteName;
-  }
-  syncChatInputState(editableInput);
-}
-
-// ################ АВТОДОПОЛНЕНИЕ ПО ":название"
-
-let autocompleteBox = null;
-let autocompleteMatches = [];
-let autocompleteSelected = 0;
-let autocompleteRange = null; // { start, end } character offsets in the input's text
-let autocompleteAttached = false;
-
-// Стандартный способ получить позицию каретки внутри contenteditable
-// в виде смещения символов от начала текста.
-function getCaretOffset(element) {
-  const selection = window.getSelection();
-  if (!selection.rangeCount) return 0;
-  const range = selection.getRangeAt(0).cloneRange();
-  range.selectNodeContents(element);
-  range.setEnd(selection.anchorNode, selection.anchorOffset);
-  return range.toString().length;
-}
-
-function setCaretOffset(element, offset) {
-  const range = document.createRange();
-  const selection = window.getSelection();
-  let remaining = offset;
-  let node = null;
-
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  while ((node = walker.nextNode())) {
-    if (remaining <= node.nodeValue.length) {
-      range.setStart(node, remaining);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
+  function setActive(index) {
+    const tiles = visibleTiles();
+    for (const tile of tiles) tile.removeAttribute("active");
+    if (!tiles.length) {
+      activeIndex = -1;
       return;
     }
-    remaining -= node.nodeValue.length;
+    activeIndex = Math.max(0, Math.min(index, tiles.length - 1));
+    const tile = tiles[activeIndex];
+    tile.setAttribute("active", "true");
+    tile.scrollIntoView({ block: "nearest" });
+    showPreview(tile.dataset.emote, emoteMap.get(tile.dataset.emote));
   }
 
-  // Offset beyond the text — just place the caret at the very end.
-  range.selectNodeContents(element);
-  range.collapse(false);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
+  let mode = "all";
 
-function closeAutocomplete() {
-  if (autocompleteBox) autocompleteBox.remove();
-  autocompleteBox = null;
-  autocompleteMatches = [];
-  autocompleteRange = null;
-}
+  function applyFilter() {
+    const query = input.value.trim();
+    const searching = query.length > 0;
 
-function renderAutocomplete(inputContainer) {
-  if (!autocompleteBox) {
-    autocompleteBox = document.createElement("div");
-    autocompleteBox.id = "seventv-autocomplete";
-    inputContainer.appendChild(autocompleteBox);
+    resultsContainer.hidden = !searching;
+    for (const c of setContainers) c.hidden = searching || mode === "recent";
+
+    if (searching) {
+      recentContainer.hidden = true;
+      resultsGrid.textContent = "";
+      const hits = rankedMatches(query, 120);
+      resultsName.textContent = hits.length ? "Results · " + hits.length : "No matches";
+      for (const hit of hits) resultsGrid.appendChild(buildTile(hit.name, hit.info, ctx));
+    } else {
+      refreshRecent();
+    }
+    setActive(0);
   }
-  autocompleteBox.innerHTML = "";
 
-  autocompleteMatches.forEach((name, i) => {
-    const item = document.createElement("div");
-    item.className = "seventv-autocomplete-item";
-    if (i === autocompleteSelected) item.classList.add("seventv-active");
-
-    const img = document.createElement("img");
-    img.src = emoteMap.get(name);
-    const label = document.createElement("span");
-    label.textContent = name;
-
-    item.appendChild(img);
-    item.appendChild(label);
-    item.addEventListener("mousedown", e => {
-      // mousedown (not click) so it fires before the input loses focus.
-      e.preventDefault();
-      applyAutocomplete(i);
+  for (const [label, value] of [["All", "all"], ["Recent", "recent"]]) {
+    const chip = el("div", "seventv-emote-menu-provider-icon", providers);
+    if (value === mode) chip.setAttribute("selected", "true");
+    el("span", null, chip).textContent = label;
+    chip.addEventListener("click", () => {
+      mode = value;
+      for (const other of providers.children) other.removeAttribute("selected");
+      chip.setAttribute("selected", "true");
+      applyFilter();
     });
+  }
 
-    autocompleteBox.appendChild(item);
+  input.addEventListener("input", applyFilter);
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      menu.hidden = true;
+      chatInput()?.focus();
+      return;
+    }
+
+    const tiles = visibleTiles();
+    if (!tiles.length) return;
+
+    if (e.key === "Enter") {
+      const tile = tiles[activeIndex];
+      if (tile) {
+        e.preventDefault();
+        insertEmote(tile.dataset.emote);
+      }
+      return;
+    }
+
+    // Rows wrap, so a row is however many tiles share the first tile's top.
+    const firstTop = tiles[0].offsetTop;
+    const wrapAt = tiles.findIndex(tile => tile.offsetTop > firstTop);
+    const perRow = wrapAt > 0 ? wrapAt : tiles.length;
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: perRow, ArrowUp: -perRow }[e.key];
+    if (step === undefined) return;
+
+    e.preventDefault();
+    setActive((activeIndex < 0 ? 0 : activeIndex) + step);
   });
+
+  scroller.addEventListener("mouseleave", clearPreview);
+
+  document.body.appendChild(menu);
+
+  menu.refresh = () => {
+    input.value = "";
+    applyFilter();
+    clearPreview();
+  };
+  return menu;
 }
 
-function applyAutocomplete(index) {
-  const name = autocompleteMatches[index];
-  const editableInput = getEditableChatInput();
-  if (!name || !editableInput || !autocompleteRange) return;
-
-  const text = editableInput.textContent;
-  const newText =
-    text.slice(0, autocompleteRange.start) + name + " " + text.slice(autocompleteRange.end);
-
-  editableInput.textContent = newText;
-  setCaretOffset(editableInput, autocompleteRange.start + name.length + 1);
-  syncChatInputState(editableInput);
-  closeAutocomplete();
-}
-
-function handleAutocompleteInput(e) {
-  if (!emoteMap || emoteMap.size === 0) return;
-  const editableInput = e.target;
-  if (!editableInput.matches?.(
-    'yt-live-chat-text-input-field-renderer#input div#input[contenteditable]'
-  )) return;
-
-  const caret = getCaretOffset(editableInput);
-  const text = editableInput.textContent;
-  const beforeCaret = text.slice(0, caret);
-
-  // Match a ":partial" token right before the caret, with no spaces in it.
-  const match = beforeCaret.match(/:([^\s:]{0,30})$/);
-  if (!match) {
-    closeAutocomplete();
-    return;
-  }
-
-  const query = match[1].toLowerCase();
-  autocompleteMatches = [...emoteMap.keys()]
-    .filter(name => name.toLowerCase().startsWith(query))
-    .slice(0, 8);
-
-  if (autocompleteMatches.length === 0) {
-    closeAutocomplete();
-    return;
-  }
-
-  autocompleteRange = { start: caret - match[0].length, end: caret };
-  autocompleteSelected = 0;
-
-  const inputContainer = document.querySelector(
-    'yt-live-chat-message-input-renderer #input-container'
+function findButtonRow(renderer) {
+  // YouTube has renamed this row before, so try the known ids and then fall
+  // back to whatever actually holds the emoji button.
+  return (
+    renderer.querySelector("#picker-buttons") ||
+    renderer.querySelector("#buttons") ||
+    renderer.querySelector("yt-live-chat-icon-toggle-button-renderer")?.parentElement ||
+    null
   );
-  if (inputContainer) renderAutocomplete(inputContainer);
 }
 
-function handleAutocompleteKeydown(e) {
-  if (!autocompleteBox || autocompleteMatches.length === 0) return;
+function mountPicker(floating) {
+  if (document.getElementById("seventv-picker-toggle")) return true;
 
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    autocompleteSelected = (autocompleteSelected + 1) % autocompleteMatches.length;
-    renderAutocomplete(autocompleteBox.parentElement);
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    autocompleteSelected =
-      (autocompleteSelected - 1 + autocompleteMatches.length) % autocompleteMatches.length;
-    renderAutocomplete(autocompleteBox.parentElement);
-  } else if (e.key === "Enter" || e.key === "Tab") {
-    e.preventDefault();
-    applyAutocomplete(autocompleteSelected);
-  } else if (e.key === "Escape") {
-    closeAutocomplete();
-  }
-}
+  const renderer = document.querySelector("yt-live-chat-message-input-renderer");
+  // Chat replay has no input to type into, so a picker there would be dead
+  // UI: every click would insert into nothing.
+  if (!renderer) return false;
 
-function initAutocomplete() {
-  if (autocompleteAttached) return;
-  autocompleteAttached = true;
+  const host = findButtonRow(renderer);
+  if (!host && !floating) return false;
 
-  // Delegated on document since YouTube can recreate the input element.
-  document.addEventListener("input", handleAutocompleteInput, true);
-  document.addEventListener("keydown", handleAutocompleteKeydown, true);
-  document.addEventListener("click", e => {
-    if (autocompleteBox && !autocompleteBox.contains(e.target)) closeAutocomplete();
+  const panel = buildPicker();
+
+  const btn = document.createElement("button");
+  btn.id = "seventv-picker-toggle";
+  btn.type = "button";
+  btn.title = "7TV emotes";
+  btn.textContent = "7TV";
+  btn.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    if (panel.hidden) return;
+    panel.refresh();
+    panel.querySelector("input").focus();
   });
+
+  if (host) {
+    host.prepend(btn);
+  } else {
+    // Nothing recognisable to attach to. Float it instead — the debug badge
+    // proves fixed positioning renders fine in this iframe.
+    btn.classList.add("seventv-floating");
+    document.body.appendChild(btn);
+  }
+  console.log("[7TV for YouTube] picker mounted:", host ? "#" + host.id : "floating");
+
+  document.addEventListener("click", e => {
+    if (panel.hidden) return;
+    // Clicking the chat input must not close the menu — you often click into
+    // the box to place the caret and then keep picking emotes.
+    if (e.target.closest?.("#seventv-picker, #seventv-picker-toggle, yt-live-chat-message-input-renderer")) return;
+    panel.hidden = true;
+  });
+
+  const input = chatInput();
+  if (input) setupAutocomplete(input);
+  return true;
+}
+
+function mountPickerWhenReady() {
+  let tries = 0;
+  const timer = setInterval(() => {
+    // ponytail: after ~15s give up on YouTube's button row and float the
+    // toggle, so a DOM rename can never leave the picker unreachable.
+    if (mountPicker(tries >= 30) || ++tries > 30) clearInterval(timer);
+  }, 500);
+}
+
+// --- Autocomplete -----------------------------------------------------------
+// Typing beats hunting through 900 tiles, so match what 7TV does on Twitch:
+// type a couple of letters and pick from a short list without leaving the
+// keyboard.
+
+const AUTOCOMPLETE_MIN = 2;
+const AUTOCOMPLETE_MAX = 8;
+
+function caretToken() {
+  const sel = window.getSelection();
+  if (!sel || !sel.isCollapsed || !sel.anchorNode) return null;
+
+  const node = sel.anchorNode;
+  if (node.nodeType !== Node.TEXT_NODE) return null;
+
+  const before = node.nodeValue.slice(0, sel.anchorOffset);
+  const match = before.match(/(\S+)$/);
+  if (!match) return null;
+
+  return {
+    node,
+    start: sel.anchorOffset - match[0].length,
+    end: sel.anchorOffset,
+    text: match[0]
+  };
+}
+
+function replaceToken(token, name) {
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.setStart(token.node, token.start);
+  range.setEnd(token.node, token.end);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  // Replacing the selection through execCommand keeps YouTube's own input
+  // handling intact, same as inserting from the picker.
+  document.execCommand("insertText", false, name + " ");
+  rememberEmote(name);
+}
+
+function setupAutocomplete(input) {
+  const box = el("div");
+  box.id = "seventv-autocomplete";
+  box.hidden = true;
+  document.body.appendChild(box);
+
+  let items = [];
+  let active = 0;
+  let token = null;
+
+  function close() {
+    box.hidden = true;
+    items = [];
+    token = null;
+  }
+
+  function render() {
+    box.textContent = "";
+    items.forEach((hit, i) => {
+      const row = el("div", "seventv-autocomplete-row", box);
+      if (i === active) row.setAttribute("active", "true");
+      el("img", null, row).src = hit.info.url;
+      el("span", null, row).textContent = hit.name;
+      row.addEventListener("mousedown", e => {
+        // mousedown, not click: clicking would blur the input and drop the
+        // caret before the replacement could happen.
+        e.preventDefault();
+        replaceToken(token, hit.name);
+        close();
+      });
+    });
+    box.hidden = items.length === 0;
+    // Both sit above the chat input, so they must not be open at once.
+    const picker = document.getElementById("seventv-picker");
+    if (picker && !box.hidden) picker.hidden = true;
+  }
+
+  input.addEventListener("input", () => {
+    token = caretToken();
+    if (!token || token.text.length < AUTOCOMPLETE_MIN) return close();
+
+    items = rankedMatches(token.text, AUTOCOMPLETE_MAX);
+    // Nothing to offer once the name is already complete.
+    if (items.length === 1 && items[0].name === token.text) return close();
+
+    active = 0;
+    render();
+  });
+
+  // Capture on the document: Enter has to be intercepted before YouTube sees
+  // it, or picking a suggestion sends the half-typed message instead.
+  document.addEventListener("keydown", e => {
+    if (box.hidden || !items.length) return;
+
+    if (e.key === "Escape") {
+      close();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      render();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      replaceToken(token, items[active].name);
+      close();
+    }
+  }, true);
+
+  input.addEventListener("blur", () => setTimeout(close, 150));
 }

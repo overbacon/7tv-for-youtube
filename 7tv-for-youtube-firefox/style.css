@@ -1,138 +1,379 @@
-.seventv-emote {
+/* --- Emotes in chat -------------------------------------------------------
+   Every emote sits in a stack wrapper so a zero-width emote can be layered
+   on top of the one before it instead of landing beside it. */
+
+.seventv-emote-stack {
+  position: relative;
   display: inline-block;
-  height: 28px;
-  width: auto;
   vertical-align: middle;
   margin: -4px 1px;
 }
 
-/* Кнопка открытия панели */
-#seventv-picker-btn {
-  background: transparent;
-  border: 1px solid #ffffff40;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: bold;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  z-index: 10;
-  transition: background 0.2s;
-  margin-right: 8px;
+.seventv-emote {
+  display: block;
+  height: 28px;
+  width: auto;
 }
 
-#seventv-picker-btn:hover {
-  background: #ffffff20;
+.seventv-emote-stack .seventv-zero-width {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: none;
 }
 
-/* Сетка с эмодзи */
-#seventv-picker-grid {
-  width: 100%;
-  max-height: 230px;
-  overflow-y: auto;
-  box-sizing: border-box;
+/* --- Emote picker ---------------------------------------------------------
+   Metrics and colours below are taken from 7TV's own emote menu stylesheet so
+   this reads as the same UI. Everything is scoped under #seventv-picker so the
+   shared class names can't collide if the real 7TV extension ever runs here. */
+
+#seventv-picker-toggle {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
-  gap: 8px;
-  padding: 10px;
-  background: #222;
-}
-
-.seventv-picker-item {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: background 0.15s;
-  display: block;
-}
-
-.seventv-picker-item:hover {
-  background: #ffffff20;
-}
-
-#seventv-picker-grid::-webkit-scrollbar {
-  width: 8px;
-}
-
-#seventv-picker-grid::-webkit-scrollbar-track {
+  align-items: center;
+  border: none;
   background: transparent;
+  cursor: pointer;
+  transition: background .2s ease-in-out;
+  height: 2.25rem;
+  padding: 3px 7px;
+  border-radius: .25rem;
+  color: var(--yt-spec-text-secondary, #aaa);
+  font: 600 12px/1 Roboto, sans-serif;
 }
 
-#seventv-picker-grid::-webkit-scrollbar-thumb {
-  background: #ffffff40;
-  border-radius: 4px;
-}
+#seventv-picker-toggle:hover { background: rgba(255, 255, 255, .1); }
 
-#seventv-picker-container {
-  position: absolute;
-  bottom: 100%;
-  right: 0;
-  width: 350px;
-  max-height: 300px;
-  box-sizing: border-box;
-  background: #222;
-  border: 1px solid #444;
-  border-radius: 6px;
-  overflow: hidden;
-  z-index: 9999;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  display: none;
-}
-
-#seventv-picker-container.seventv-active {
-  display: block;
-}
-
-#seventv-picker-container input {
-  width: calc(100% - 20px);
-  margin: 10px;
-  padding: 8px;
-  box-sizing: border-box;
-  background: #222;
-  border: 1px solid #444;
+#seventv-picker-toggle.seventv-floating {
+  position: fixed;
+  right: 8px;
+  bottom: 28px;
+  z-index: 10000;
   color: #fff;
-  border-radius: 4px;
-  outline: none;
-  display: block;
+  background: rgba(0, 0, 0, .8);
 }
 
-/* Автодополнение по ":название" */
-#seventv-autocomplete {
+#seventv-picker {
+  --seventv-background-transparent-1: #171717c4;
+  --seventv-background-transparent-2: #13131397;
+  --seventv-background-shade-1: #171717;
+  --seventv-background-shade-2: #131313;
+  --seventv-border-transparent-1: #ffffff1a;
+  --seventv-highlight-neutral-1: #8080803b;
+  --seventv-text-color-normal: #f0f0f0;
+  --seventv-primary: #29b6f6;
+
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 3.5em;
+  z-index: 10000;
+  font: 400 12px/1.2 Roboto, system-ui, sans-serif;
+  color: var(--seventv-text-color-normal);
+
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr auto;
+  outline: .1em solid var(--seventv-border-transparent-1);
+  background-color: var(--seventv-background-transparent-1);
+  border-radius: .25em;
+  -webkit-backdrop-filter: blur(1em);
+  backdrop-filter: blur(1em);
+  max-height: calc(100vh - 4.5em);
+  overflow: hidden;
+}
+
+/* YouTube light chat: 7TV's light palette. */
+html:not([dark]) #seventv-picker {
+  --seventv-background-transparent-1: #f7f7f7c4;
+  --seventv-background-transparent-2: #e7e7e797;
+  --seventv-background-shade-1: #f7f7f7;
+  --seventv-background-shade-2: #e7e7e7;
+  --seventv-border-transparent-1: #0000001a;
+  --seventv-highlight-neutral-1: #cfcfcf9e;
+  --seventv-text-color-normal: #161616;
+}
+
+#seventv-picker[hidden] { display: none; }
+#seventv-picker *, #seventv-picker *:before, #seventv-picker *:after { box-sizing: border-box; }
+
+#seventv-picker .seventv-emote-menu-header {
+  display: grid;
+  grid-template-rows: 1fr .75fr;
+  border-bottom: .1em solid var(--seventv-border-transparent-1);
+  border-radius: .25em .25em 0 0;
+  background: hsla(0, 0%, 50%, .06);
+}
+
+#seventv-picker .seventv-emote-menu-providers {
+  display: flex;
+  justify-content: space-evenly;
+  align-items: center;
+  column-gap: .5em;
+  margin: 1em .75em;
+}
+
+#seventv-picker .seventv-emote-menu-provider-icon {
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: .5em .25em;
+  border-radius: .25em;
+  background: hsla(0, 0%, 50%, .06);
+  transition: background .15s ease-in-out;
+}
+
+#seventv-picker .seventv-emote-menu-provider-icon:hover { background: hsla(0, 0%, 50%, .16); }
+#seventv-picker .seventv-emote-menu-provider-icon[selected=true] {
+  background: var(--seventv-highlight-neutral-1);
+}
+
+#seventv-picker .seventv-emote-menu-provider-icon > span {
+  font-family: Roboto, monospace;
+  font-weight: 600;
+  font-size: 1.5em;
+}
+
+#seventv-picker .seventv-emote-menu-search { position: relative; height: 100%; }
+
+#seventv-picker .seventv-emote-menu-search .search-icon {
   position: absolute;
-  bottom: 100%;
-  left: 0;
-  margin-bottom: 4px;
-  width: 220px;
-  max-height: 220px;
-  overflow-y: auto;
-  background: #222;
-  border: 1px solid #444;
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  z-index: 9999;
+  top: 0;
+  left: .5em;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: .85em;
+  font-size: 1.4em;
+  opacity: .45;
+  user-select: none;
+  pointer-events: none;
 }
 
-.seventv-autocomplete-item {
+#seventv-picker .seventv-emote-menu-search-input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  padding-left: 3em;
+  font: inherit;
+  color: currentColor;
+  background-color: var(--seventv-background-shade-1);
+  transition: background-color .14s;
+}
+
+#seventv-picker .seventv-emote-menu-search-input:focus {
+  background-color: var(--seventv-background-shade-2);
+}
+
+#seventv-picker .seventv-emote-menu-body {
+  display: grid;
+  overflow: hidden;
+  height: 40vh;
+  max-height: 24em;
+  /* Lets the body shrink instead of pushing the search box off-screen when
+     the chat frame is shorter than the menu's natural height. */
+  min-height: 0;
+}
+
+#seventv-picker .seventv-emote-menu-tab-container {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+}
+
+#seventv-picker .seventv-emote-menu-scroll { overflow-y: auto; }
+
+#seventv-picker .seventv-emote-menu-tab-sidebar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: hsla(0, 0%, 50%, .06);
+  border-left: 1px solid var(--seventv-border-transparent-1);
+}
+
+#seventv-picker .seventv-emote-menu-sidebar-icons { overflow-y: scroll; scrollbar-width: none; }
+#seventv-picker .seventv-emote-menu-sidebar-icons::-webkit-scrollbar { width: 0; height: 0; }
+
+#seventv-picker .seventv-emote-menu-set-sidebar-icon-container {
+  width: 100%;
+  padding: .5em 0;
+  cursor: pointer;
+}
+
+#seventv-picker .seventv-emote-menu-set-sidebar-icon-container[selected=true] {
+  background: hsla(0, 0%, 50%, .32);
+}
+
+#seventv-picker .seventv-emote-menu-set-sidebar-icon {
+  display: block;
+  width: 2.8em;
+  height: 2.8em;
+  margin: auto;
+  border-radius: .5em;
+  object-fit: contain;
+  overflow: clip;
+}
+
+#seventv-picker .seventv-emote-menu-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  cursor: pointer;
-  color: #e8e8e8;
-  font-size: 12px;
-  font-family: system-ui, sans-serif;
+  gap: .5em;
+  height: 2.75em;
+  padding: 0 .75em;
+  border-top: .1em solid var(--seventv-border-transparent-1);
+  background: hsla(0, 0%, 50%, .06);
+  border-radius: 0 0 .25em .25em;
 }
 
-.seventv-autocomplete-item img {
-  width: 24px;
-  height: 24px;
+#seventv-picker .seventv-preview-img {
+  width: 2em;
+  height: 2em;
   object-fit: contain;
+  flex: none;
 }
 
-.seventv-autocomplete-item:hover,
-.seventv-autocomplete-item.seventv-active {
-  background: #ffffff20;
+#seventv-picker .seventv-preview-img[hidden] { display: none; }
+
+#seventv-picker .seventv-preview-name {
+  font-size: 1.15em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+#seventv-picker .seventv-emote-set-container { position: relative; }
+#seventv-picker .seventv-emote-set-container[hidden] { display: none; }
+
+#seventv-picker .seventv-set-header {
+  position: sticky;
+  top: -1px;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: auto 1fr 1.5em;
+  align-items: center;
+  column-gap: .5em;
+  height: 3em;
+  padding: .5em 1.25em;
+  cursor: pointer;
+  background: var(--seventv-background-transparent-2);
+  -webkit-backdrop-filter: blur(1em);
+  backdrop-filter: blur(1em);
+}
+
+#seventv-picker .seventv-set-header-icon {
+  max-width: 2em;
+  max-height: 2em;
+  border-radius: .5em;
+  overflow: clip;
+}
+
+#seventv-picker .seventv-set-name {
+  display: block;
+  font-size: 1.5em;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#seventv-picker .seventv-set-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2em;
+  height: 2em;
+  border-radius: .25em;
+  transition: transform .25s ease;
+}
+
+#seventv-picker .seventv-set-chevron:hover { background-color: #4d4d4d52; }
+
+#seventv-picker .seventv-emote-set-container[collapsed=true] .seventv-emote-set { display: none; }
+#seventv-picker .seventv-emote-set-container[collapsed=true] .seventv-set-chevron {
+  transform: rotate(-90deg);
+}
+
+#seventv-picker .seventv-emote-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  margin: 0 .5em;
+}
+
+#seventv-picker .seventv-emote-container {
+  display: grid;
+  place-items: center;
+  width: 4em;
+  height: 4em;
+  margin: .25em;
+  border-radius: .25rem;
+  cursor: pointer;
+  background: hsla(0, 0%, 50%, .06);
+}
+
+#seventv-picker .seventv-emote-container:hover { background: hsla(0, 0%, 50%, .32); }
+#seventv-picker .seventv-emote-container[hidden] { display: none; }
+
+/* Same marker 7TV uses for overlay emotes, so it is obvious which ones stack. */
+#seventv-picker .seventv-emote-container[zero-width=true] {
+  border: .1rem solid rgb(220, 170, 50);
+}
+
+#seventv-picker .seventv-emote-container[active=true] {
+  background: hsla(0, 0%, 50%, .32);
+  outline: .15em solid var(--seventv-primary);
+}
+
+#seventv-picker .seventv-emote-container img {
+  max-width: 3.5em;
+  max-height: 3.5em;
+}
+
+/* --- Autocomplete --------------------------------------------------------- */
+
+#seventv-autocomplete {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 3.5em;
+  z-index: 10001;
+  max-height: 16em;
+  overflow-y: auto;
+  padding: .25em;
+  border: 1px solid rgba(128, 128, 128, .35);
+  border-radius: .35em;
+  background: #171717f0;
+  color: #f0f0f0;
+  font: 400 12px/1.2 Roboto, system-ui, sans-serif;
+  -webkit-backdrop-filter: blur(1em);
+  backdrop-filter: blur(1em);
+}
+
+html:not([dark]) #seventv-autocomplete {
+  background: #f7f7f7f0;
+  color: #161616;
+}
+
+#seventv-autocomplete[hidden] { display: none; }
+
+.seventv-autocomplete-row {
+  display: flex;
+  align-items: center;
+  gap: .5em;
+  padding: .25em .4em;
+  border-radius: .25em;
+  cursor: pointer;
+}
+
+.seventv-autocomplete-row img {
+  width: 2em;
+  height: 2em;
+  object-fit: contain;
+  flex: none;
+}
+
+.seventv-autocomplete-row[active=true] { background: hsla(0, 0%, 50%, .32); }
+.seventv-autocomplete-row:hover { background: hsla(0, 0%, 50%, .2); }

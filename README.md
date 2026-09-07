@@ -1,10 +1,20 @@
+# В чём же разница форка и оригинала? 
+
+1. Добавлен эмоут пикер как в расширении 7tv
+<img width="522" height="472" alt="image" src="https://github.com/user-attachments/assets/4ced4028-8ac5-48b6-afc3-286576de96b0" />
+2. Добавлена возможность делать склейку эмоутов
+3. Добавлен авто-подбор эмоутов 
+<img width="519" height="175" alt="image" src="https://github.com/user-attachments/assets/25a49f02-7496-402c-92dc-2768708d9fdc" />
+4. Добавлено "недавние эмоуты" отдельная вкладка где показывает недавно использованные эмоуты
+5. Оптимизация загрузки эмоутов, оригинал пытается сразу загрузить 907 эмоутов сразу. Я сделал так что-бы он грузил только те что видно на экране  
+
 # 7tv-for-youtube
 # 7TV for YouTube (Unofficial) 7TV для YouTube (Неофициально)
+
 
 # КАЧАТЬ ЧЕРЕЗ [РЕЛИЗЫ](https://github.com/syocless/7tv-for-youtube/releases)
 # DOWNLOAD CLICK ON [RELEASES](https://github.com/syocless/7tv-for-youtube/releases) 
 # НАБОР СМАЙЛИКОВ Olesha Ent. https://7tv.app/emote-sets/01FEGJ99QR000AENY3GSAKBAHP
-# Люди которые внесли вклад ❤️ Eargosha
 
 7TV для YouTube (Неофициально)
 Расширение для браузера, которое добавляет 7TV-смайлики в YouTube Live Chat.

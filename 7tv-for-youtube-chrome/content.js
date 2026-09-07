@@ -614,7 +614,8 @@ function mountPickerWhenReady() {
 // type a couple of letters and pick from a short list without leaving the
 // keyboard.
 
-const AUTOCOMPLETE_MIN = 2;
+// Characters typed after the ":" before suggestions appear.
+const AUTOCOMPLETE_MIN = 1;
 const AUTOCOMPLETE_MAX = 8;
 
 function caretToken() {
@@ -625,14 +626,18 @@ function caretToken() {
   if (node.nodeType !== Node.TEXT_NODE) return null;
 
   const before = node.nodeValue.slice(0, sel.anchorOffset);
-  const match = before.match(/(\S+)$/);
+  // Suggestions are opt-in behind a ":", the way emote autocomplete works on
+  // Twitch. Matching any word popped a menu up mid-sentence. The ":" only
+  // counts at the start of a word, so clock times and links stay quiet.
+  const match = before.match(/(?:^|\s):([^\s:]*)$/);
   if (!match) return null;
 
   return {
     node,
-    start: sel.anchorOffset - match[0].length,
+    // Start on the ":" itself so accepting a suggestion replaces it too.
+    start: sel.anchorOffset - match[1].length - 1,
     end: sel.anchorOffset,
-    text: match[0]
+    text: match[1]
   };
 }
 
@@ -690,10 +695,9 @@ function setupAutocomplete(input) {
     token = caretToken();
     if (!token || token.text.length < AUTOCOMPLETE_MIN) return close();
 
+    // Kept open even on an exact name: the ":" still has to be replaced,
+    // and only accepting a suggestion does that.
     items = rankedMatches(token.text, AUTOCOMPLETE_MAX);
-    // Nothing to offer once the name is already complete.
-    if (items.length === 1 && items[0].name === token.text) return close();
-
     active = 0;
     render();
   });

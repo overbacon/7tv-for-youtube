@@ -1,0 +1,4 @@
+# Release archives are built from the source folders and attached to a
+# GitHub release, so they don't belong in the repository itself.
+*.zip
+*.7z

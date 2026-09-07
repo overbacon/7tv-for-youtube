@@ -5,6 +5,9 @@
 <img width="522" height="472" alt="image" src="https://github.com/user-attachments/assets/4ced4028-8ac5-48b6-afc3-286576de96b0" />
 
 2. Добавлена возможность делать склейку эмоутов
+
+<img width="293" height="38" alt="image" src="https://github.com/user-attachments/assets/9ce4acc3-be15-4dc1-b9fd-3436f53a58d1" />
+
 3. Добавлен авто-подбор эмоутов 
 
 <img width="519" height="175" alt="image" src="https://github.com/user-attachments/assets/25a49f02-7496-402c-92dc-2768708d9fdc" />

@@ -377,3 +377,8 @@ html:not([dark]) #seventv-autocomplete {
 
 .seventv-autocomplete-row[active=true] { background: hsla(0, 0%, 50%, .32); }
 .seventv-autocomplete-row:hover { background: hsla(0, 0%, 50%, .2); }
+
+/* Emotes from the wider 7TV library aren't yours yet — clicking one keeps it. */
+#seventv-picker .seventv-emote-container[library=true] {
+  border: .1rem dashed rgba(41, 182, 246, .85);
+}

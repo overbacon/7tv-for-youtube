@@ -190,6 +190,9 @@ async function init() {
     for (const [name, url] of set.emotes) merged.set(name, url);
   }
 
+  await loadCollected();
+  for (const [name, info] of collected) merged.set(name, info);
+
   if (merged.size === 0) {
     showBadge("0 emotes loaded (see console)", true);
     return;
@@ -212,6 +215,87 @@ init();
 chrome.storage.onChanged.addListener(changes => {
   if (changes.emoteSetIds) location.reload();
 });
+
+// --- 7TV library search -----------------------------------------------------
+// The whole point of the emote-set IDs in the popup is to get emotes into
+// chat. Searching 7TV directly removes that step: pick an emote from the
+// full library and it is kept, rendered and suggested from then on.
+
+const SEVEN_TV_GQL = "https://7tv.io/v3/gql";
+const LIBRARY_QUERY =
+  "query($query:String!,$limit:Int){emotes(query:$query,limit:$limit," +
+  "sort:{value:\"popularity\",order:DESCENDING}){items{id name flags listed " +
+  "host{url files{name format}}}}}";
+
+let collected = new Map(); // name -> { url, zeroWidth }
+
+async function loadCollected() {
+  try {
+    const { collectedEmotes } = await chrome.storage.local.get("collectedEmotes");
+    for (const e of collectedEmotes || []) {
+      collected.set(e.name, { url: e.url, zeroWidth: !!e.zeroWidth });
+    }
+  } catch (err) {
+    console.warn("[7TV for YouTube] could not read collected emotes", err);
+  }
+}
+
+function saveCollected() {
+  const list = [...collected].map(([name, info]) => ({
+    name,
+    url: info.url,
+    zeroWidth: info.zeroWidth
+  }));
+  try {
+    chrome.storage.local.set({ collectedEmotes: list });
+  } catch (err) {
+    console.warn("[7TV for YouTube] could not save collected emotes", err);
+  }
+}
+
+// Keeping an emote has to reach the chat renderer too, not just the menu:
+// the name lookup and the match pattern are both rebuilt here.
+function keepEmote(name, info) {
+  if (collected.has(name) || (emoteMap && emoteMap.has(name))) return false;
+  collected.set(name, info);
+  saveCollected();
+  emoteMap.set(name, info);
+  emoteRegex = compileRegex(emoteMap);
+  return true;
+}
+
+async function searchLibrary(query, limit) {
+  const res = await fetch(SEVEN_TV_GQL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: LIBRARY_QUERY, variables: { query, limit } })
+  });
+  if (!res.ok) throw new Error("7TV search error: " + res.status);
+
+  const body = await res.json();
+  if (body.errors) throw new Error("7TV search rejected the query");
+
+  const items = body.data?.emotes?.items || [];
+  const out = [];
+  // 7TV holds thousands of separate uploads under the same name, and emotes
+  // here are keyed by name, so only the first of each can ever be kept.
+  const seen = new Set();
+  for (const item of items) {
+    if (seen.has(item.name)) continue;
+    // "listed" is 7TV's own public-listing flag; unlisted emotes are hidden
+    // from search on the site too.
+    if (!item.listed) continue;
+    const host = item.host;
+    if (!host) continue;
+    const url = buildEmoteUrl(host, host.files || []);
+    if (!url) continue;
+    // Bit 8 is the emote's own zero-width flag, the library equivalent of the
+    // per-set flag used when loading a set.
+    seen.add(item.name);
+    out.push({ name: item.name, info: { url, zeroWidth: (item.flags & 256) !== 0 } });
+  }
+  return out;
+}
 
 // --- Recently used ----------------------------------------------------------
 
@@ -306,7 +390,7 @@ function loadTile(img, attempt) {
   img.src = img.dataset.src;
 }
 
-function buildTile(name, info, ctx) {
+function buildTile(name, info, ctx, onPick) {
   const cell = el("div", "seventv-emote-container");
   cell.dataset.name = name.toLowerCase();
   cell.dataset.emote = name;
@@ -317,7 +401,7 @@ function buildTile(name, info, ctx) {
   img.alt = name;
   ctx.watcher.observe(img);
 
-  cell.addEventListener("click", () => insertEmote(name));
+  cell.addEventListener("click", () => (onPick ? onPick(name, info) : insertEmote(name)));
   cell.addEventListener("mouseenter", () => ctx.preview(name, info));
   return cell;
 }
@@ -424,14 +508,84 @@ function buildPicker() {
   const resultsName = el("span", "seventv-set-name", resultsHeader);
   const resultsGrid = el("div", "seventv-emote-set", resultsContainer);
 
+  // Anything the local sets don't have is looked up in the full 7TV library.
+  const libraryContainer = el("div", "seventv-emote-set-container", scroller);
+  libraryContainer.hidden = true;
+  const libraryHeader = el("div", "seventv-set-header", libraryContainer);
+  el("div", "seventv-set-header-icon", libraryHeader);
+  const libraryName = el("span", "seventv-set-name", libraryHeader);
+  const libraryGrid = el("div", "seventv-emote-set", libraryContainer);
+
   const recentContainer = el("div", "seventv-emote-set-container", scroller);
   const recentHeader = el("div", "seventv-set-header", recentContainer);
   el("div", "seventv-set-header-icon", recentHeader);
   el("span", "seventv-set-name", recentHeader).textContent = "Recently used";
   const recentGrid = el("div", "seventv-emote-set", recentContainer);
 
+  const collectedContainer = el("div", "seventv-emote-set-container", scroller);
+  const collectedHeader = el("div", "seventv-set-header", collectedContainer);
+  el("div", "seventv-set-header-icon", collectedHeader);
+  el("span", "seventv-set-name", collectedHeader).textContent = "Kept from 7TV";
+  const collectedGrid = el("div", "seventv-emote-set", collectedContainer);
+
   const setContainers = emoteSets.map(set => buildSetSection(set, scroller, icons, ctx));
   icons.firstElementChild?.setAttribute("selected", "true");
+
+  function refreshCollected() {
+    collectedGrid.textContent = "";
+    for (const [name, info] of collected) {
+      collectedGrid.appendChild(buildTile(name, info, ctx));
+    }
+    collectedContainer.hidden = collected.size === 0;
+  }
+
+  // Keeping an emote makes it render in chat and show up in suggestions, so
+  // the menu and the kept section both have to catch up straight away.
+  function pickFromLibrary(name, info) {
+    keepEmote(name, info);
+    insertEmote(name);
+    refreshCollected();
+    applyFilter();
+  }
+
+  let libraryTimer = null;
+  let librarySeq = 0;
+
+  function searchLibraryFor(query) {
+    clearTimeout(libraryTimer);
+    if (query.length < 3) {
+      libraryContainer.hidden = true;
+      return;
+    }
+
+    const seq = ++librarySeq;
+    libraryContainer.hidden = false;
+    libraryGrid.textContent = "";
+    libraryName.textContent = "7TV library · searching…";
+
+    // A search costs about half a second, so wait for a pause in typing
+    // rather than firing one request per keystroke.
+    libraryTimer = setTimeout(async () => {
+      try {
+        const hits = await searchLibrary(query, 60);
+        if (seq !== librarySeq) return; // a newer query overtook this one
+        const fresh = hits.filter(hit => !emoteMap.has(hit.name));
+        libraryGrid.textContent = "";
+        libraryName.textContent = fresh.length
+          ? "7TV library · " + fresh.length
+          : "7TV library · nothing new";
+        for (const hit of fresh) {
+          const tile = buildTile(hit.name, hit.info, ctx, pickFromLibrary);
+          tile.setAttribute("library", "true");
+          libraryGrid.appendChild(tile);
+        }
+      } catch (err) {
+        if (seq !== librarySeq) return;
+        libraryName.textContent = "7TV library · search failed";
+        console.warn("[7TV for YouTube] library search failed", err);
+      }
+    }, 350);
+  }
 
   function refreshRecent() {
     recentGrid.textContent = "";
@@ -472,6 +626,9 @@ function buildPicker() {
     resultsContainer.hidden = !searching;
     for (const c of setContainers) c.hidden = searching || mode === "recent";
 
+    collectedContainer.hidden = searching || mode === "recent" || collected.size === 0;
+    searchLibraryFor(query);
+
     if (searching) {
       recentContainer.hidden = true;
       resultsGrid.textContent = "";
@@ -480,6 +637,7 @@ function buildPicker() {
       for (const hit of hits) resultsGrid.appendChild(buildTile(hit.name, hit.info, ctx));
     } else {
       refreshRecent();
+      refreshCollected();
     }
     setActive(0);
   }
